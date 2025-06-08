@@ -11,7 +11,7 @@ def main():
     cmd = ["gz", "topic", "-e", "-t", "/model/iris/pose"]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
 
-    print("📡 Listening to gz topic output...")
+    print(" Listening to gz topic output...")
     buffer = ""
     try:
         for line in proc.stdout:
@@ -22,13 +22,13 @@ def main():
                 if match:
                     x, y, z = map(float, match.groups())
                     # print("\033c", end="")
-                    print("📍 Drone Position (ENU):")
+                    print(" Drone Position (ENU):")
                     print(f"  ➤ X (East):  {x:.3f} m")
                     print(f"  ➤ Y (North): {y:.3f} m")
                     print(f"  ➤ Z (Up):    {z:.3f} m")
                 buffer = ""  # reset buffer after parsing
     except KeyboardInterrupt:
-        print("\n🛑 Stopped listening")
+        print("\n Stopped listening")
         proc.terminate()
         proc.wait()
 
