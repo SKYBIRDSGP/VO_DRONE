@@ -34,7 +34,7 @@ class VisionPoseBridge(Node):
         self.reset_global_origin(lat, lon, alt)
         self.send_initial_vo_burst()
         self.set_mode("GUIDED")
-        self.get_logger().info("🛰️ ArduPilot setup complete")
+        self.get_logger().info("ArduPilot setup complete")
 
     def get_gps_data(self):
         # Fake GPS data for simulation
