@@ -3,6 +3,8 @@
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Point
+
+import select
 import subprocess
 import re
 
@@ -29,23 +31,27 @@ class GzPosePublisher(Node):
 
     def read_pose(self):
         try:
-            line = self.proc.stdout.readline()
-            if not line:
-                return
-            self.buffer += line
-            if "}" in line:
-                match = pattern.search(self.buffer)
-                if match:
-                    x, y, z = map(float, match.groups())
-                    msg = Point()
-                    msg.x = x
-                    msg.y = y
-                    msg.z = z
-                    self.publisher_.publish(msg)
-                    self.get_logger().info(f"Published ENU Point: x={x:.3f}, y={y:.3f}, z={z:.3f}")
-                self.buffer = ""
+            # Check if data is ready
+            ready, _, _ = select.select([self.proc.stdout], [], [], 0)
+            if ready:
+                line = self.proc.stdout.readline()
+                if not line:
+                    return
+                self.buffer += line
+                if "}" in line:
+                    match = pattern.search(self.buffer)
+                    if match:
+                        x, y, z = map(float, match.groups())
+                        msg = Point()
+                        msg.x = x
+                        msg.y = y
+                        msg.z = z
+                        self.publisher_.publish(msg)
+                        self.get_logger().info(f"Published ENU Point: x={x:.3f}, y={y:.3f}, z={z:.3f}")
+                    self.buffer = ""
         except Exception as e:
             self.get_logger().error(f"Error: {e}")
+
 
 def main(args=None):
     rclpy.init(args=args)
@@ -62,4 +68,3 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
-
