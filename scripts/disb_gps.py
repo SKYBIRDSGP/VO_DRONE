@@ -1,92 +1,114 @@
+#!/usr/bin/env python3
+
+import time
 import rclpy
 from rclpy.node import Node
-from nav_msgs.msg import Odometry
+from geometry_msgs.msg import Point
 from pymavlink import mavutil
-import time
-import math
-import tf_transformations
 
-class VOPublisher(Node):
+class VisionPoseBridge(Node):
     def __init__(self):
-        super().__init__('vo_publisher')
+        super().__init__('vision_pose_bridge')
 
-        # MAVLink connection
+        # Connect to MAVLink
         self.master = mavutil.mavlink_connection('udp:127.0.0.1:14551')
         self.master.wait_heartbeat()
-        self.get_logger().info('Connected to MAVLink')
+        self.get_logger().info("Heartbeat received from ArduPilot")
 
-        # Set EKF origin/home position (DO THIS EARLY!)
-        self.set_home_position()
-        self.get_logger().info('Sent Home Position.')
+        # Setup initial GPS and EKF data
+        self.setup_ekf_and_home()
 
-        # Start VO publisher
-        self.subscription = self.create_subscription(
-            Odometry,
-            '/odometry',
-            self.odom_callback,
-            10
-        )
+        # Latest pose from Gazebo
+        self.latest_vo = Point()
 
-        # Optional: Set to LOITER or GUIDED
+        # ROS 2 Subscriber to Gazebo VO data
+        self.subscription = self.create_subscription(Point, '/vo_gz_data', self.vo_callback, 0)
+        self.get_logger().info("Subscribed to /vo_gz_data")
 
-        # Optional: Arm the vehicle (if needed)
-        # self.arm_drone()
+        # Timer for publishing VO to ArduPilot @ ~5Hz
+        self.timer = self.create_timer(0.2, self.send_vision_position)
 
-        # Send a few fake VO msgs to wake EKF before main odom_callback runs
-        self.bootstrap_vo()
+    def setup_ekf_and_home(self):
+        lat, lon, alt = self.get_gps_data()
+        self.set_home_position(lat, lon)
+        self.reset_global_origin(lat, lon, alt)
+        self.send_initial_vo_burst()
+        self.set_mode("GUIDED")
+        self.get_logger().info("🛰️ ArduPilot setup complete")
 
-    def bootstrap_vo(self):
-        self.get_logger().info("Sending dummy VO data for EKF init...")
-        for _ in range(20):
-            now = int(time.time() * 1e6)
-            self.master.mav.vision_position_estimate_send(
-                now,
-                0.0, 0.0, -0.1,   # z < 0 to simulate slight altitude
-                0.0, 0.0, 0.0,
-                [0]*21, 0
-            )
-            time.sleep(0.1)
-        self.get_logger().info("VO bootstrap done.")
+    def get_gps_data(self):
+        # Fake GPS data for simulation
+        return -35.3632621, 149.165237, 583.97
 
-    def odom_callback(self, msg):
-        now = int(time.time() * 1e6)
-        roll, pitch, yaw = self.euler_from_quaternion(msg.pose.pose.orientation)
-
-        self.master.mav.vision_position_estimate_send(
-            now,
-            msg.pose.pose.position.x,
-            msg.pose.pose.position.y,
-            msg.pose.pose.position.z,
-            roll,
-            pitch,
-            yaw,
-            [0]*21,
-            0
-        )
-        self.get_logger().info(f"VO sent: x={msg.pose.pose.position.x:.2f}, y={msg.pose.pose.position.y:.2f}")
-
-    def set_home_position(self):
-        lat, lon, alt = -35.3632621, 149.165237, 583.97  # IIT Dharwad or fake location
+    def set_home_position(self, lat, lon):
         self.master.mav.command_long_send(
-            self.master.target_system,
-            self.master.target_component,
+            self.master.target_system, self.master.target_component,
             mavutil.mavlink.MAV_CMD_DO_SET_HOME,
-            1,  # Use current location (relative=1)
-            0, 0, 0, 0,
-            lat, lon, alt
+            1, 0, 0, 0, 0,
+            lat, lon, 0
         )
-        self.get_logger().info("Sent the Home position !")
+        self.get_logger().info("Home position set")
 
-    def euler_from_quaternion(self, q):
-        orientation_list = [q.x, q.y, q.z, q.w]
-        return tf_transformations.euler_from_quaternion(orientation_list)
+    def reset_global_origin(self, lat, lon, alt):
+        self.master.mav.set_gps_global_origin_send(
+            self.master.target_system,
+            int(lat * 1e7),
+            int(lon * 1e7),
+            int(alt * 1000)
+        )
+        self.get_logger().info(f"Global origin set: lat={lat}, lon={lon}, alt={alt}")
+
+    def send_initial_vo_burst(self):
+        for _ in range(15):
+            self.send_vp_to_nav(0, 0, 0)
+            time.sleep(0.1)
+        self.get_logger().info("Sent VO burst for EKF init")
+
+    def set_mode(self, mode):
+        mode_id = self.master.mode_mapping().get(mode)
+        if mode_id is None:
+            self.get_logger().error(f"Unknown mode: {mode}")
+            return
+        self.master.mav.set_mode_send(
+            self.master.target_system,
+            mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
+            mode_id
+        )
+        ack = self.master.recv_match(type='HEARTBEAT', blocking=True)
+        if ack.custom_mode == mode_id:
+            self.get_logger().info(f" Mode set to {mode}")
+        else:
+            self.get_logger().warn(f" Mode set to {mode} may have failed")
+
+    def vo_callback(self, msg: Point):
+        self.latest_vo = msg
+
+    def send_vp_to_nav(self, x, y, z):
+        self.master.mav.global_vision_position_estimate_send(
+            int(time.time() * 1e6),
+            y, x, -z,
+            0.0, 0.0, 0.0,
+            [10, 0, 0, 0, 0, 0,
+             10, 0, 0, 0, 0,
+             1, 0, 0, 0,
+             1, 0, 0,
+             1, 0, 1]
+        )
+        self.get_logger().info(f" Sent VO: x={x:.2f}, y={y:.2f}, z={z:.2f}")
+
+    def send_vision_position(self):
+        self.send_vp_to_nav(
+            self.latest_vo.x,
+            self.latest_vo.y,
+            self.latest_vo.z
+        )
 
 def main(args=None):
     rclpy.init(args=args)
-    node = VOPublisher()
+    node = VisionPoseBridge()
     rclpy.spin(node)
     node.destroy_node()
     rclpy.shutdown()
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
