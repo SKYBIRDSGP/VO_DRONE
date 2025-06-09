@@ -17,7 +17,7 @@ pattern = re.compile(
 class GzPosePublisher(Node):
     def __init__(self):
         super().__init__('gz_pose_publisher')
-        self.publisher_ = self.create_publisher(Point, '/vo_gz_data', 10)
+        self.publisher_ = self.create_publisher(Point, '/vo_gz_data', 0)
 
         self.get_logger().info("Starting to publish the Pose Data !!!")
         self.start_gz_listener()
@@ -27,7 +27,7 @@ class GzPosePublisher(Node):
         self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
 
         self.buffer = ""
-        self.create_timer(0.01, self.read_pose)
+        self.create_timer(0.0001, self.read_pose)
 
     def read_pose(self):
         try:
