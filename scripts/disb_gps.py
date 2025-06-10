@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-
 import time
 import rclpy
+
 from rclpy.node import Node
+
 from geometry_msgs.msg import Point
 from pymavlink import mavutil
 
@@ -25,8 +26,8 @@ class VisionPoseBridge(Node):
         self.subscription = self.create_subscription(Point, '/vo_gz_data', self.vo_callback, 0)
         self.get_logger().info("Subscribed to /vo_gz_data")
 
-        # Timer for publishing VO to ArduPilot @ ~5Hz
-        self.timer = self.create_timer(0.2, self.send_vision_position)
+        # Frequency of Publishing the VisualOdom messages to the Ardupilot --> 10Hz
+        self.timer = self.create_timer(0.1, self.send_vision_position)
 
     def setup_ekf_and_home(self):
         lat, lon, alt = self.get_gps_data()
